@@ -35,15 +35,15 @@ SOCKS5_PASS = ""
 
 ### Environment Variables
 
-| Variable         | Required | Default                       | Description                                                    |
-| ---------------- | -------- | ----------------------------- | -------------------------------------------------------------- |
-| `UUID`           | Yes      | —                             | VLESS UUID used for authentication                             |
-| `WS_PATH`        | No       | `/ws`                         | WebSocket path to listen on                                    |
-| `SOCKS5_ENABLED` | No       | `false`                       | Routes outbound TCP through a SOCKS5 proxy                     |
-| `SOCKS5_HOST`    | No       | `127.0.0.1`                   | SOCKS5 proxy hostname or IP                                    |
-| `SOCKS5_PORT`    | No       | `1080`                        | SOCKS5 proxy port                                              |
-| `SOCKS5_USER`    | No       | `bolbol`                      | SOCKS5 username (leave empty if no authentication is required) |
-| `SOCKS5_PASS`    | No       | `your_secure_bolbol_password` | SOCKS5 password                                                |
+| Variable         | Required | Default     | Description                                                    |
+| ---------------- | -------- | ----------- | -------------------------------------------------------------- |
+| `UUID`           | Yes      | —           | VLESS UUID used for authentication                             |
+| `WS_PATH`        | No       | `/ws`       | WebSocket path to listen on                                    |
+| `SOCKS5_ENABLED` | No       | `false`     | Routes outbound TCP through a SOCKS5 proxy                     |
+| `SOCKS5_HOST`    | No       | `127.0.0.1` | SOCKS5 proxy hostname or IP                                    |
+| `SOCKS5_PORT`    | No       | `1080`      | SOCKS5 proxy port                                              |
+| `SOCKS5_USER`    | No       | —           | SOCKS5 username (leave empty if no authentication is required) |
+| `SOCKS5_PASS`    | No       | —           | SOCKS5 password                                                |
 
 ## Deploy
 
