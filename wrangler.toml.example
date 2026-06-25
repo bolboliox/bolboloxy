@@ -1,0 +1,12 @@
+name = "bolboloxy"
+main = "src/worker.js"
+compatibility_date = "2024-06-25"
+
+[vars]
+UUID = ""
+WS_PATH = "/ws"
+SOCKS5_ENABLED = "false"
+SOCKS5_HOST = ""
+SOCKS5_PORT = ""
+SOCKS5_USER = ""
+SOCKS5_PASS = ""
