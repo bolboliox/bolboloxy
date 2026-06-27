@@ -61,6 +61,8 @@ async function connectViaSOCKS5(targetHost, targetPort, config) {
   const hasAuth = username && password;
   
   const socket = connect({ hostname: host, port });
+  await socket.opened; // Ensure the socket is formally established
+
   const rawReader = socket.readable.getReader();
   const writer = socket.writable.getWriter();
 
@@ -183,8 +185,7 @@ async function connectViaSOCKS5(targetHost, targetPort, config) {
     // 4. Reply
     const reply = await readBytes(4);
     if (reply[1] !== 0) {
-      const errors = { 1: "General failure", 2: "Not allowed", 3: "Network unreachable", 4: "Host unreachable", 5: "Connection refused", 6: "TTL expired", 7: "Command not supported", 8: "Address type not supported" };
-      throw new Error(`SOCKS5 error: ${errors[reply[1]] || reply[1]}`);
+      throw new Error(`SOCKS5 error code: ${reply[1]}`);
     }
 
     const addrType2 = reply[3];
@@ -220,16 +221,7 @@ const LANDING_HTML = `<!DOCTYPE html>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>BOLBOL</title>
     <style>
-        body {
-            font-family: system-ui, -apple-system, sans-serif;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            margin: 0;
-            background: #0f172a;
-            color: #e2e8f0;
-        }
+        body { font-family: system-ui, -apple-system, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #0f172a; color: #e2e8f0; }
         .container { text-align: center; padding: 2rem; }
         h1 { font-size: 2rem; margin-bottom: 0.5rem; }
         p { color: #94a3b8; }
@@ -251,7 +243,7 @@ export default {
 
     if (url.pathname !== config.path) {
       if (request.headers.get("Upgrade") === "websocket") {
-        return new Response("WebSocket path not found", { status: 404 });
+        return new Response("Not found", { status: 404 });
       }
       return new Response(LANDING_HTML, {
         status: 200,
@@ -269,69 +261,122 @@ export default {
     let tcpWriter = null;
     let tcpSocket = null;
     let closed = false;
+    let connecting = false;
+    let pendingMessages = [];
 
     const cleanup = () => {
       if (closed) return;
       closed = true;
       try { tcpWriter?.close(); } catch {}
       try { tcpSocket?.close(); } catch {}
+      pendingMessages = [];
+      try { server.close(1000); } catch {} // Close cleanly if not already closed
     };
 
     server.addEventListener("message", async (event) => {
       if (closed) return;
-      
+
       try {
         const data = new Uint8Array(event.data);
 
+        // Queue messages arriving while initial connection is being set up
+        if (connecting && !tcpSocket) {
+          pendingMessages.push(data);
+          return;
+        }
+
         if (!tcpSocket) {
           const header = parseVless(data);
-          if (header.error) { cleanup(); server.close(1011); return; }
+          if (header.error) { cleanup(); return; }
+          if (env.UUID && header.uuid !== env.UUID) { cleanup(); return; }
 
-          if (header.uuid !== env.UUID) { cleanup(); server.close(1011); return; }
+          connecting = true;
+
+          let reader;
+          const CONNECT_TIMEOUT = 10_000;
+          let timeoutId;
+          const createTimeout = () => new Promise((_, reject) => {
+            timeoutId = setTimeout(() => reject(new Error('Connection timed out')), CONNECT_TIMEOUT);
+          });
 
           try {
-            let reader;
             if (config.socks5.enabled) {
-              const result = await connectViaSOCKS5(header.addr, header.port, config);
+              const result = await Promise.race([
+                connectViaSOCKS5(header.addr, header.port, config),
+                createTimeout()
+              ]);
+              clearTimeout(timeoutId);
               tcpSocket = result.socket;
               tcpWriter = result.writer;
               reader = result.read;
             } else {
               tcpSocket = connect({ hostname: header.addr, port: header.port });
+              
+              // Wait for HTTP/TCP handshake securely
+              await Promise.race([tcpSocket.opened, createTimeout()]);
+              clearTimeout(timeoutId);
+
               tcpWriter = tcpSocket.writable.getWriter();
               const tcpReader = tcpSocket.readable.getReader();
               reader = () => tcpReader.read();
             }
 
-            server.send(new Uint8Array([0, 0]));
+            // Connection successful
+            try {
+              server.send(new Uint8Array([0, 0]));
+            } catch (e) {
+              // Client disconnected exactly as we connected
+              throw new Error("Client disconnect");
+            }
 
+            // Write initial payload if it exists
             if (data.length > header.headerLen) {
               await tcpWriter.write(data.slice(header.headerLen));
             }
 
+            connecting = false;
+
+            // Flush queued messages safely
+            for (const msg of pendingMessages) {
+              if (closed) break;
+              await tcpWriter.write(msg);
+            }
+            pendingMessages = [];
+
+            // Start relay: target -> client
             (async () => {
               try {
-                while (true) {
+                while (!closed) {
                   const { done, value } = await reader();
                   if (done) break;
-                  if (value && value.length > 0 && !closed) {
+                  if (value && value.length > 0 && server.readyState === 1) {
                     server.send(value);
                   }
                 }
-              } catch {}
-              cleanup();
-              try { server.close(); } catch {}
+              } catch (e) {
+                // Ignore safe drop errors
+              } finally {
+                cleanup();
+              }
             })();
+
           } catch (e) {
+            clearTimeout(timeoutId);
+            connecting = false;
             cleanup();
-            server.close(1011);
+            return;
           }
         } else {
-          await tcpWriter.write(data);
+          // Already connected: forward data to target
+          try {
+            await tcpWriter.write(data);
+          } catch (e) {
+            // Socket write failed, cleanly shut down
+            cleanup();
+          }
         }
-      } catch {
+      } catch (e) {
         cleanup();
-        try { server.close(); } catch {}
       }
     });
 
